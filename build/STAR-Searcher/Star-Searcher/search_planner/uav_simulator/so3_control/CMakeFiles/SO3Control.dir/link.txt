@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC -O3 -DNDEBUG  -shared -Wl,-soname,libSO3Control.so -o /home/jacob/star-searcher/devel/lib/libSO3Control.so CMakeFiles/SO3Control.dir/src/SO3Control.cpp.o   -L/home/jacob/star-searcher/src/STAR-Searcher/Star-Searcher/search_planner/uav_simulator/Utils/cmake_utils/lib/mosek8 

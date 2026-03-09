@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC -O3 -DNDEBUG  -shared -Wl,-soname,libquadrotor_dynamics.so -o /home/jacob/star-searcher/devel/lib/libquadrotor_dynamics.so CMakeFiles/quadrotor_dynamics.dir/src/dynamics/Quadrotor.cpp.o   -L/home/jacob/star-searcher/src/STAR-Searcher/Star-Searcher/search_planner/uav_simulator/Utils/cmake_utils/lib/mosek8 

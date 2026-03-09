@@ -1,0 +1,8 @@
+prefix=/home/jacob/star-searcher/devel
+
+Name: uav_utils
+Description: Description of uav_utils
+Version: 0.0.0
+Cflags: -I/home/jacob/star-searcher/src/STAR-Searcher/Star-Searcher/search_planner/uav_simulator/Utils/uav_utils/include
+Libs: -L${prefix}/lib 
+Requires: roscpp rospy
