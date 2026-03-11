@@ -5,6 +5,8 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <cmath>
 #include <set>
+#include <map>
+#include <deque>
 
 class TagBridge {
 private:
@@ -14,6 +16,11 @@ private:
     tf2_ros::Buffer tf_buffer;
     tf2_ros::TransformListener tf_listener;
     std::set<int> detected_ids;
+
+    // --- 滤波相关参数 ---
+    struct TagPos { double x, y, z; };
+    std::map<int, std::deque<TagPos>> pos_buffer; // 存储每个ID的历史位置
+    const size_t WINDOW_SIZE = 5;                 // 平均滤波窗口大小
 
 public:
     TagBridge() : tf_listener(tf_buffer) {
@@ -26,76 +33,97 @@ public:
         
         for (const auto& detection : msg->detections) {
             int id = detection.id[0];
-            if (detected_ids.count(id)) continue;
+            // 如果已经确认过的Tag不想重复处理，可以保留这行，
+            // 但如果想实时跟踪，建议注释掉下面这行
+            // if (detected_ids.count(id)) continue; 
+
+            // 1. 距离过滤：判断 Tag 离相机的相对距离（使用原始消息中的位姿）
+            double rel_x = detection.pose.pose.pose.position.x;
+            double rel_y = detection.pose.pose.pose.position.y;
+            double rel_z = detection.pose.pose.pose.position.z;
+            double rel_dist = sqrt(rel_x*rel_x + rel_y*rel_y + rel_z*rel_z);
+
+            if (rel_dist > 8.0) { // 如果离相机超过6米，跳过
+                ROS_DEBUG("Tag %d too far from camera (%.2f m)", id, rel_dist);
+                continue;
+            }
 
             try {
-                // // TF 坐标转换
-                // geometry_msgs::PoseStamped source_pose;
-                // source_pose.header = detection.pose.header;
-                // source_pose.pose = detection.pose.pose.pose;
-
-                // // 使用当前时间戳进行转换，避免过期数据问题
-                // geometry_msgs::PoseStamped target_pose;
-                // tf_buffer.transform(source_pose, target_pose, "world", ros::Duration(0.1));
-                // //tf_buffer.transform(source_pose, target_pose, "world", source_pose.header.stamp);
+                // 2. TF 坐标同步转换
                 geometry_msgs::TransformStamped transform = tf_buffer.lookupTransform(
                     "world", 
                     detection.pose.header.frame_id, 
-                    detection.pose.header.stamp, // 使用 image timestamp
-                    ros::Duration(0.1));         // 给 100ms 等待缓冲区数据
+                    detection.pose.header.stamp, 
+                    ros::Duration(0.1));
 
-                // 2. 将检测到的位姿（pose）进行转换
-                 geometry_msgs::PoseStamped source_pose;
-                 source_pose.header = detection.pose.header;
-                 source_pose.pose = detection.pose.pose.pose;
+                geometry_msgs::PoseStamped source_pose;
+                source_pose.header = detection.pose.header;
+                source_pose.pose = detection.pose.pose.pose;
     
-                 geometry_msgs::PoseStamped target_pose;
-                 tf2::doTransform(source_pose, target_pose, transform);
+                geometry_msgs::PoseStamped target_pose;
+                tf2::doTransform(source_pose, target_pose, transform);
 
-                 // 现在 target_pose 就是极其精确的 World 坐标了
-                
+                // 3. 多帧平均滤波逻辑
+                TagPos current_p = {target_pose.pose.position.x, target_pose.pose.position.y, target_pose.pose.position.z};
+                pos_buffer[id].push_back(current_p);
 
-                // 距离确认，如果距离过远则不显示marker
-                double distance = sqrt(pow(target_pose.pose.position.x, 2) + 
-                                       pow(target_pose.pose.position.y, 2) + 
-                                       pow(target_pose.pose.position.z, 2));
-                if (distance > 5.0) {
-                    ROS_WARN("Tag %d is too far (%.2f m), skipping marker.", id, distance);
-                    continue;
+                if (pos_buffer[id].size() > WINDOW_SIZE) {
+                    pos_buffer[id].pop_front();
                 }
 
-                // 创建 Marker
-                visualization_msgs::Marker marker;
-                marker.header.frame_id = "world"; //rostopic echo /ardrone/ground_truth/odometry显示的world坐标系
-                marker.header.stamp = ros::Time::now();
-                marker.ns = "tags";
-                marker.id = id;
-                marker.type = visualization_msgs::Marker::SPHERE;
-                marker.action = visualization_msgs::Marker::ADD;
-                marker.pose = target_pose.pose;
-                marker.pose.position.z += 0.25; // 抬高一点
+                // 只有采样达到窗口大小时才发布 Marker，确保数据稳定
+                if (pos_buffer[id].size() == WINDOW_SIZE) {
+                    TagPos avg_p = {0, 0, 0};
+                    for (const auto& p : pos_buffer[id]) {
+                        avg_p.x += p.x; avg_p.y += p.y; avg_p.z += p.z;
+                    }
+                    avg_p.x /= WINDOW_SIZE; avg_p.y /= WINDOW_SIZE; avg_p.z /= WINDOW_SIZE;
+
+                    // --- 创建 Marker (柱子) ---
+                    visualization_msgs::Marker marker;
+                    marker.header.frame_id = "world";
+                    marker.header.stamp = ros::Time::now();
+                    marker.ns = "tag_pillars";
+                    marker.id = id;
+                    marker.type = visualization_msgs::Marker::CYLINDER;
+                    marker.action = visualization_msgs::Marker::ADD;
+                    
+                    double x_offset = 1.3; // 可以根据需要调整偏移
+                    marker.pose.position.x = avg_p.x + x_offset;
+                    marker.pose.position.y = avg_p.y;
+                    marker.pose.position.z = avg_p.z + 0.5; // 柱子底座在中心，往上提半个高度
+                    
+                    marker.scale.x = 0.2; marker.scale.y = 0.2; marker.scale.z = 1.0;
+                    marker.color.r = 0.0; marker.color.g = 1.0; marker.color.b = 0.0; marker.color.a = 0.8;
+
+                    // --- 创建 ID 文本 Marker (方便辨认) ---
+                    visualization_msgs::Marker text_marker;
+                    text_marker.header = marker.header;
+                    text_marker.ns = "tag_labels";
+                    text_marker.id = id + 1000;
+                    text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+                    text_marker.pose.position = marker.pose.position;
+                    text_marker.pose.position.z += 0.8; // 飘在柱子上方
+                    text_marker.scale.z = 0.4; // 字体大小
+                    text_marker.color.r = 0.0; text_marker.color.g = 0.0; text_marker.color.b = 1.0; text_marker.color.a = 1.0;
+                    text_marker.text = "ID: " + std::to_string(id);
+
+                    marker_array.markers.push_back(marker);
+                    marker_array.markers.push_back(text_marker);
+                    
+                    detected_ids.insert(id); // 记录已标记
+                    ROS_INFO("Detected Tag ID: %d", id);
+                }
                 
-                //让我的marker更明显一些
-                // marker.scale.x = 0.3; marker.scale.y = 0.3; marker.scale.z = 0.5;
-                // marker.color.r = 1.0; marker.color.g = 0.0; marker.color.b = 0.0; marker.color.a = 1.0;
-                // 增大尺寸
-                marker.scale.x = 0.4; marker.scale.y = 0.4; marker.scale.z = 0.4;
-
-                // 使用荧光绿 + 半透明边缘效果
-                marker.color.r = 0.0; marker.color.g = 1.0; marker.color.b = 0.0; marker.color.a = 1.0;
-
-
-                marker_array.markers.push_back(marker);
-                detected_ids.insert(id);
-                ROS_INFO("Detected Tag %d in C++!", id);
             } catch (tf2::TransformException &ex) {
                 ROS_WARN("TF error: %s", ex.what());
             }
         }
-        marker_pub.publish(marker_array);
+        if (!marker_array.markers.empty()) {
+            marker_pub.publish(marker_array);
+        }
     }
 };
-
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "tag_to_marker_bridge");
