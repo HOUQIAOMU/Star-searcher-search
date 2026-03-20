@@ -63,6 +63,27 @@ public:
                 geometry_msgs::PoseStamped target_pose;
                 tf2::doTransform(source_pose, target_pose, transform);
 
+                // ================== 新增：角度过滤逻辑 ==================
+                // 提取 Tag 相对于相机的旋转
+                // tf2::Quaternion q_tf2;
+                // tf2::fromMsg(detection.pose.pose.pose.orientation, q_tf2);
+                // tf2::Matrix3x3 m(q_tf2);
+                // double roll, pitch, yaw;
+                // m.getRPY(roll, pitch, yaw);
+
+                // // 定义阈值：约 70 度 (1.22 弧度)
+                // // 如果俯仰或偏航角度过大，说明相机看得很斜，数据不可信
+                // const double ANGLE_THRESHOLD = 1.22; 
+                // if (std::abs(pitch) > ANGLE_THRESHOLD || std::abs(yaw) > ANGLE_THRESHOLD) {
+                //     ROS_WARN_THROTTLE(1.0, "Tag %d filtered out: Angle too steep (P:%.2f, Y:%.2f)", id, pitch, yaw);
+                //     continue; 
+                // }
+                // // ======================================================
+
+                // //  只有通过角度过滤的数据，才进入你的平均滤波缓存
+                // TagPos current_p = {target_pose.pose.position.x, target_pose.pose.position.y, target_pose.pose.position.z};
+                // pos_buffer[id].push_back(current_p);
+
                 // 3. 多帧平均滤波逻辑
                 TagPos current_p = {target_pose.pose.position.x, target_pose.pose.position.y, target_pose.pose.position.z};
                 pos_buffer[id].push_back(current_p);
@@ -88,13 +109,14 @@ public:
                     marker.type = visualization_msgs::Marker::CYLINDER;
                     marker.action = visualization_msgs::Marker::ADD;
                     
-                    double x_offset = 1.3; // 可以根据需要调整偏移
+                    double x_offset = 1.2; // 可以根据需要调整偏移
+                    double y_offset = -0.6;
                     marker.pose.position.x = avg_p.x + x_offset;
-                    marker.pose.position.y = avg_p.y;
+                    marker.pose.position.y = avg_p.y + y_offset;
                     marker.pose.position.z = avg_p.z + 0.5; // 柱子底座在中心，往上提半个高度
                     
                     marker.scale.x = 0.2; marker.scale.y = 0.2; marker.scale.z = 1.0;
-                    marker.color.r = 0.0; marker.color.g = 1.0; marker.color.b = 0.0; marker.color.a = 0.8;
+                    marker.color.r = 0.0; marker.color.g = 0.0; marker.color.b = 1.0; marker.color.a = 0.8;
 
                     // --- 创建 ID 文本 Marker (方便辨认) ---
                     visualization_msgs::Marker text_marker;

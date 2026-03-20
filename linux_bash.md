@@ -1,0 +1,2 @@
+source devel/setup.bash && roslaunch exploration_manager rviz.launch 2> >(grep -v TF_REPEATED_DATA )
+source devel/setup.bash && roslaunch exploration_manager search_map1.launch 2> >(grep -v TF_REPEATED_DATA )
